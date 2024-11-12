@@ -46,6 +46,7 @@ type LDAPAuthenticator struct {
 	RequireGroups          bool
 	SFTPGoUserRequirements int
 	BaseDir                string
+	SSHPubkeyAttribute     string
 	tlsConfig              *tls.Config
 	monitorTicker          *time.Ticker
 	cleanupDone            chan bool
@@ -304,7 +305,12 @@ func (a *LDAPAuthenticator) searchUser(l *ldap.Conn, username string) (*ldap.Ent
 			return nil, err
 		}
 	}
-	attributes := append([]string{"dn"}, a.GroupAttributes...)
+	var attr []string
+	attr = append(attr, "dn", "mail")
+	if a.SSHPubkeyAttribute != "" {
+		attr = append(attr, a.SSHPubkeyAttribute)
+	}
+	attributes := append(attr, a.GroupAttributes...)
 	searchRequest := ldap.NewSearchRequest(a.BaseDN,
 		ldap.ScopeWholeSubtree, ldap.DerefInSearching, 0, 0, false,
 		strings.ReplaceAll(a.SearchQuery, "%username%", ldap.EscapeFilter(username)),
@@ -338,8 +344,20 @@ func (a *LDAPAuthenticator) getUser(userAsJSON []byte, attributes []*ldap.EntryA
 		return nil, err
 	}
 	var groups []sdk.GroupMapping
+	var mail string = ""
+	var pubkeys []string
 
 	for _, attr := range attributes {
+		if attr.Name == "mail" {
+			mail = attr.Values[0]
+			logger.AppLogger.Debug("mail", mail)
+			continue
+		}
+		if attr.Name == a.SSHPubkeyAttribute {
+			pubkeys = attr.Values
+			logger.AppLogger.Debug("pubkeys", pubkeys)
+			continue
+		}
 		if !contains(a.GroupAttributes, attr.Name) {
 			continue
 		}
@@ -372,7 +390,7 @@ func (a *LDAPAuthenticator) getUser(userAsJSON []byte, attributes []*ldap.EntryA
 		return nil, err
 	}
 
-	if !a.isUserToUpdate(&user, groups) {
+	if !a.isUserToUpdate(&user, groups, mail, pubkeys) {
 		return nil, nil
 	}
 	if user.ID == 0 {
@@ -387,6 +405,8 @@ func (a *LDAPAuthenticator) getUser(userAsJSON []byte, attributes []*ldap.EntryA
 	user.Filters.WebClient = append(user.Filters.WebClient, webClientPerms...)
 	user.Filters.WebClient = removeDuplicates(user.Filters.WebClient)
 	user.Groups = groups
+	user.Email = mail
+	user.PublicKeys = pubkeys
 
 	return json.Marshal(user)
 }
@@ -400,7 +420,7 @@ func (a *LDAPAuthenticator) isSFTPGoUserRequired() bool {
 	return a.SFTPGoUserRequirements == 1
 }
 
-func (a *LDAPAuthenticator) isUserToUpdate(u *sdk.User, groups []sdk.GroupMapping) bool {
+func (a *LDAPAuthenticator) isUserToUpdate(u *sdk.User, groups []sdk.GroupMapping, mail string, pubkeys []string) bool {
 	if a.isSFTPGoUserRequired() {
 		return false
 	}
@@ -416,11 +436,19 @@ func (a *LDAPAuthenticator) isUserToUpdate(u *sdk.User, groups []sdk.GroupMappin
 			return true
 		}
 	}
-	if !a.hasGroups() {
-		return false
-	}
+	//if !a.hasGroups() {
+	//	return false
+	//}
 	if len(groups) != len(u.Groups) {
 		logger.AppLogger.Debug("groups to update", "user", u.Username, "groups", groups)
+		return true
+	}
+	if mail != u.Email {
+		logger.AppLogger.Debug("email to update", "user", u.Username, "email", mail)
+		return true
+	}
+	if len(pubkeys) != len(u.PublicKeys) {
+		logger.AppLogger.Debug("PublicKeys to update", "user", u.Username, "PublicKeys", pubkeys)
 		return true
 	}
 	for _, g := range groups {
@@ -433,6 +461,19 @@ func (a *LDAPAuthenticator) isUserToUpdate(u *sdk.User, groups []sdk.GroupMappin
 		}
 		if !found {
 			logger.AppLogger.Debug("groups to update", "user", u.Username, "group", g.Name, "type", g.Type)
+			return true
+		}
+	}
+	for _, g := range pubkeys {
+		found := false
+		for _, ug := range u.PublicKeys {
+			if g == ug {
+				found = true
+				break
+			}
+		}
+		if !found {
+			logger.AppLogger.Debug("PublicKeys to update", "user", u.Username, "group", g)
 			return true
 		}
 	}

@@ -52,6 +52,7 @@ type Config struct {
 	RequireGroups          bool     `json:"require_groups"`
 	SFTPGoUserRequirements int      `json:"sftpgo_user_requirements"`
 	BaseDir                string   `json:"base_dir"`
+	SSHPubkeyAttribute     string   `json:"ssh_pubkey_attribute"`
 	CacheTime              int      `json:"cache_time"`
 }
 
@@ -73,6 +74,7 @@ func NewAuthenticator(config *Config) (*LDAPAuthenticator, error) {
 		SearchQuery:            config.SearchQuery,
 		GroupAttributes:        config.GroupAttributes,
 		BaseDir:                config.BaseDir,
+		SSHPubkeyAttribute:     config.SSHPubkeyAttribute,
 		PrimaryGroupPrefix:     strings.ToLower(config.PrimaryGroupPrefix),
 		SecondaryGroupPrefix:   strings.ToLower(config.SecondaryGroupPrefix),
 		MembershipGroupPrefix:  strings.ToLower(config.MembershipGroupPrefix),

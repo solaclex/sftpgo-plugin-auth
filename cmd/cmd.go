@@ -61,6 +61,7 @@ var (
 	skipTLSVerify          int
 	caCertificates         cli.StringSlice
 	usersBaseDir           string
+	sshPubkeyAttribute     string
 	primaryGroupPrefix     string
 	secondaryGroupPrefix   string
 	membershipGroupPrefix  string
@@ -180,6 +181,12 @@ var (
 						EnvVars:     []string{envPrefix + "CA_CERTIFICATES"},
 					},
 					&cli.StringFlag{
+						Name:        "ssh-pubkey-attribute",
+						Usage:       "ssh publick key attrubute at LDAP server, most likely sshPublicKey",
+						Destination: &sshPubkeyAttribute,
+						EnvVars:     []string{envPrefix + "SSH_PUBKEY_ATTRIBUTE"},
+					},
+					&cli.StringFlag{
 						Name:        "config-file",
 						Usage:       "Defines the path to an optional JSON configuration file. The configuration file can be used to configure a list of LDAP servers, with different configurations, to be used in order until one works. If set the other configuration flags are ignored",
 						Destination: &configFile,
@@ -201,6 +208,7 @@ var (
 							SkipTLSVerify:          skipTLSVerify == 1,
 							CACertificates:         caCertificates.Value(),
 							BaseDir:                usersBaseDir,
+							SSHPubkeyAttribute:     sshPubkeyAttribute,
 							CacheTime:              cacheTime,
 							SearchQuery:            ldapSearchQuery,
 							GroupAttributes:        ldapGroupAttributes.Value(),
