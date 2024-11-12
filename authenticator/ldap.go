@@ -15,6 +15,7 @@
 package authenticator
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -25,9 +26,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/go-ldap/ldap/v3"
 	"github.com/sftpgo/sdk"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/sftpgo/sftpgo-plugin-auth/logger"
 )
@@ -224,8 +227,72 @@ func (a *LDAPAuthenticator) CheckUserAndTLSCert(_, _, _, _ string, _ []byte) ([]
 	return nil, errNotImplemented
 }
 
-func (a *LDAPAuthenticator) CheckUserAndPublicKey(_, _, _, _ string, _ []byte) ([]byte, error) {
-	return nil, errNotImplemented
+func (a *LDAPAuthenticator) CheckUserAndPublicKey(username, pubKey, _, _ string, userAsJSON []byte) ([]byte, error) {
+	if pubKey == "" {
+		return nil, errInvalidCredentials
+	}
+	userKey, _, _, _, err := ssh.ParseAuthorizedKey(a.stringToBytes(pubKey))
+	if err != nil {
+		logger.AppLogger.Debug("error parsing provided public key for user %s: %v", username, err)
+		return nil, err
+	}
+	l, err := a.connect()
+	if err != nil {
+		return nil, err
+	}
+	defer l.Close()
+	entry, err := a.searchUser(l, username)
+	if err != nil {
+		return nil, err
+	}
+	pubkeys, err := a.getAttribute(a.SSHPubkeyAttribute, entry.Attributes)
+	if err != nil {
+		return nil, err
+	}
+	for idx, key := range pubkeys {
+		storedKey, _, _, _, err := ssh.ParseAuthorizedKey(a.stringToBytes(key))
+		if err != nil {
+			logger.AppLogger.Debug("error parsing stored public key %d for user %s: %v", idx, username, err)
+			return nil, err
+		}
+		if bytes.Equal(storedKey.Marshal(), userKey.Marshal()) {
+			result, err := a.getUser(userAsJSON, entry.Attributes)
+			if err != nil {
+				return nil, err
+			}
+			return result, nil
+		}
+	}
+	logger.AppLogger.Debug("Public key authentication failed. No matched key for user : %v", username)
+	return nil, errInvalidCredentials
+	//return nil, errNotImplemented
+}
+
+func (a *LDAPAuthenticator) getAttribute(keyword string, attributes []*ldap.EntryAttribute) ([]string, error) {
+	for _, attr := range attributes {
+		if attr.Name == keyword {
+			if len(attr.Values) == 0 {
+				logger.AppLogger.Debug(keyword, "attribute has no value", "err")
+				return nil, errors.New("attribute has no value")
+			}
+			return attr.Values, nil
+		}
+	}
+	logger.AppLogger.Debug(keyword, "attribute does not exist", "err")
+	return nil, errors.New("attribute does not exist")
+}
+
+// from "github.com/drakkan/sftpgo/v2/internal/util" AGPLv3
+// StringToBytes convert string to []byte without allocations.
+// https://github.com/kubernetes/kubernetes/blob/e4b74dd12fa8cb63c174091d5536a10b8ec19d34/staging/src/k8s.io/apiserver/pkg/authentication/token/cache/cached_token_authenticator.go#L289
+// Use only if strictly required, this method uses unsafe.
+func (a *LDAPAuthenticator) stringToBytes(s string) []byte {
+	// unsafe.StringData is unspecified for the empty string, so we provide a strict interpretation
+	if s == "" {
+		return nil
+	}
+	// https://github.com/golang/go/blob/4ed358b57efdad9ed710be7f4fc51495a7620ce2/src/os/file.go#L300
+	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
 
 func (a *LDAPAuthenticator) CheckUserAndKeyboardInteractive(username, _, _ string, userAsJSON []byte) ([]byte, error) {
